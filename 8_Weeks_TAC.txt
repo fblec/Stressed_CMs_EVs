@@ -1,0 +1,279 @@
+#load libraries
+library(Seurat)
+library(tidyverse)
+library(ggplot2)
+library(tidyr)
+library(SeuratData)
+library(patchwork)
+
+
+#Load object .rda from CogentDS software (Takara)
+load("C:/Users/Bleckwedel/Desktop/SCS_Lab_data/8-10W_TAC/8-10W_TAC.rda")
+
+#Take out controls
+samples <- grep("Ctrl", CogentDS_data$raw_data$metadata$Sample, invert= T )
+
+#Substracting countmatrix and the totaldata
+
+countmatrix  <- CogentDS_data$raw_data$gm
+totaldata <- CogentDS_data$raw_data$metadata
+
+#Defining control and treated samples
+Control_Samples <- c("272","256","333")
+Disease_Samples <- c("273", 256","254")
+
+#Rownames as gene names
+rownames(countmatrix) <- CogentDS_data$raw_data$gene_info$Gene_Name
+
+#Generates a list with the genenames without ENSEBL code
+genenames <- limma::strsplit2(rownames(CogentDS_data$raw_data$gm), "_")[,2]
+
+#Check that all columns al equal 
+all.equal(genenames, CogentDS_data$raw_data$gene_info$Gene_Name)
+
+#Add condition column
+totaldata <- totaldata %>% 
+  mutate(Condition = if_else(Sample %in% c(Disease_Samples)
+                             , "Disease"
+                             ,"Healthy"))
+
+#Create Seurat Object
+Seurat <- CreateSeuratObject(countmatrix[, samples],
+                             meta.data = totaldata[samples, ],
+                             project = "WntUP",
+                             min.cells = 3, min.features = 200)
+
+#Check Mitochondial gene expression
+Seurat[["percent.mt"]] <- PercentageFeatureSet(Seurat, pattern = "mt-")
+
+#filter data
+Seurat <- subset(Seurat
+                 , subset = nFeature_RNA > 2500 
+                 & nFeature_RNA < 10000 
+                 & percent.mt <25) 
+
+#Split dataset into a list of two seurat objects (stim and CTRL)
+Seurat.list <- SplitObject(Seurat, split.by = "Condition")
+
+#Normalize and identify variable features for each dataset independently
+Seurat.list <- lapply(X = Seurat.list, FUN = function(x) {
+  x <- NormalizeData(x)
+  x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000)
+})
+
+#Select features that are repeatedly variable across datasets for integration
+features <- SelectIntegrationFeatures(object.list = Seurat.list)
+
+Seurat.anchors <- FindIntegrationAnchors(object.list = Seurat.list, anchor.features = features)
+
+# Integrate assay
+Seurat.combined <- IntegrateData(anchorset = Seurat.anchors)
+
+DefaultAssay(Seurat.combined) <- "integrated"
+
+# Run standard workflow for visualization and clustering
+Seurat.combined <- ScaleData(Seurat.combined, verbose = FALSE)
+Seurat.combined <- RunPCA(Seurat.combined, npcs = 30, verbose = FALSE)
+
+# Determine percent of variation associated with each PC
+pct <- Seurat[["pca"]]@stdev / sum(Seurat[["pca"]]@stdev) * 100
+
+# Calculate cumulative percents for each PC
+cumu <- cumsum(pct)
+
+# Determine which PC exhibits cumulative percent greater than 90% 
+#and % variation associated with the PC as less than 5
+co1 <- which(cumu > 90 & pct < 5)[1]
+
+# Determine the difference between variation of PC and subsequent PC.
+# change of % of variation is more than 0.1%.
+co2 <- sort(which((pct[1:length(pct) - 1] - pct[2:length(pct)]) > 0.1)
+            , decreasing = T)[1] + 1
+
+# Minimum of the two calculation
+pcs <- min(co1, co2)
+
+# Create a dataframe with values
+plot_df <- data.frame(variation.pct = pct, 
+                      cumulative.pct = cumu, 
+                      rank = 1:length(pct))
+
+Seurat.combined <- RunUMAP(Seurat.combined, reduction = "pca", dims = 1:12)
+Seurat.combined <- FindNeighbors(Seurat.combined, reduction = "pca", dims = 1:12)
+Seurat.combined <- FindClusters(Seurat.combined, resolution = 0.5)
+
+## Cluster markers analysis for cell clasification absed on cell markers
+DefaultAssay(Seurat.combined) <- "RNA"
+cluster0.markers <- FindMarkers(Seurat.combined, ident.1 = 0, min.pct = 0.5)
+cluster1.markers <- FindMarkers(Seurat.combined, ident.1 = 1, min.pct = 0.5)
+cluster2.markers <- FindMarkers(Seurat.combined, ident.1 = 2, min.pct = 0.5)
+cluster3.markers <- FindMarkers(Seurat.combined, ident.1 = 3, min.pct = 0.5)
+cluster4.markers <- FindMarkers(Seurat.combined, ident.1 = 4, min.pct = 0.5)
+cluster5.markers <- FindMarkers(Seurat.combined, ident.1 = 5, min.pct = 0.5)
+cluster6.markers <- FindMarkers(Seurat.combined, ident.1 = 6, min.pct = 0.5)
+cluster7.markers <- FindMarkers(Seurat.combined, ident.1 = 7, min.pct = 0.25)
+cluster8.markers <- FindMarkers(Seurat.combined, ident.1 = 8, min.pct = 0.25)
+
+#Markers
+CMs_Markers<- c("Ttn","Tnnt2","Ryr2","Mybpc3",
+                "Atp2a2","Cox5a","Pdk2","Aco2","Gata4")
+
+Stress_Markers <- c("Ankrd1","Nppb","Nppa","Cryab","Acta1")
+
+ECs_Markers <- c("Vwf", "Pecam1","Kdr","Cdh5",
+                 "Cav1", "Cav2","Cavin2","Tspan7", "Fabp4","Rbp7", "Ly6c1", "Rgcc", "Emcn", "Kdr", "Tagln2")
+
+FBs_Markers <- c("Dcn", "Gsn","Pdgfra","Postn",
+                 "Igfbp6","Igfbp7","Igfbp4","Vim","Tcf21","Fbln2","Tnc")
+
+Pericyte_Markers <- c("Abcc9", "Kcnj8", "Rgs5", "Steap4", "Rgs4", "Aspn", "Vtn")
+
+MCs_Markers <- c ("Lyz2", "Cd74", "C1qb")
+
+Lymphoid_Markers <- c("Cd8a", "Cd40lg", "Il7r")
+
+Adipocyte_Markers <- c("Gpam", "Fasn", "Lep")
+
+SMs_Markers <- c("Myh11", "Tagln", "Acta2")
+
+#Subset CM clusters
+
+CM.cells <- subset(Seurat.combined, idents = c("CM1", "CM2"))
+
+# split the dataset into a list of two seurat objects
+Seurat.list <- SplitObject(CM.cells, split.by = "Condition")
+
+# normalize and identify variable features for each dataset independently
+Seurat.list <- lapply(X = Seurat.list, FUN = function(x) {
+  x <- NormalizeData(x)
+  x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000)
+})
+
+# select features that are repeatedly variable across datasets for integration
+features <- SelectIntegrationFeatures(object.list = Seurat.list)
+
+Seurat.anchors <- FindIntegrationAnchors(object.list = Seurat.list, anchor.features = features)
+
+# this command creates an 'integrated' data assay
+Seurat.CM <- IntegrateData(anchorset = Seurat.anchors)
+
+# specify that we will perform downstream analysis on the corrected data note that the original unmodified data still resides in the 'RNA' assay
+DefaultAssay(Seurat.CM) <- "integrated"
+
+# Run the standard workflow for visualization and clustering
+Seurat.CM <- ScaleData(Seurat.CM, verbose = FALSE)
+Seurat.CM <- RunPCA(Seurat.CM, npcs = 30, verbose = FALSE)
+
+#Perform Elbowplot and check how many dimention should use
+ElbowPlot(Seurat.CM, ndims = 20, reduction = "pca") ->Elbowplot
+
+# Determine percent of variation associated with each PC
+pct <- Seurat.CM[["pca"]]@stdev / sum(Seurat.CM[["pca"]]@stdev) * 100
+
+# Calculate cumulative percents for each PC
+cumu <- cumsum(pct)
+
+# Determine which PC exhibits cumulative percent greater than 90% 
+#and % variation associated with the PC as less than 5
+co1 <- which(cumu > 90 & pct < 5)[1]
+
+# Determine the difference between variation of PC and subsequent PC.
+# change of % of variation is more than 0.1%.
+co2 <- sort(which((pct[1:length(pct) - 1] - pct[2:length(pct)]) > 0.1)
+            , decreasing = T)[1] + 1
+
+# Minimum of the two calculation
+pcs <- min(co1, co2)
+
+# Create a dataframe with values
+plot_df <- data.frame(variation.pct = pct, 
+                      cumulative.pct = cumu, 
+                      rank = 1:length(pct))
+
+# Elbow plot to visualize 
+ggplot(plot_df, aes(cumu, pct, label = rank, color = rank > pcs)) + 
+  geom_text() + 
+  geom_vline(xintercept = 90, color = "grey") + 
+  geom_hline(yintercept = min(pct[pct > 5]), color = "grey") +
+  theme_bw()
+
+
+Seurat.CM <- RunUMAP(Seurat.CM, reduction = "pca", dims = 1:pcs)
+Seurat.CM <- FindNeighbors(Seurat.CM, reduction = "pca", dims = 1:pcs)
+Seurat.CM <- FindClusters(Seurat.CM, resolution = 0.4)
+
+
+
+#Figure 5A
+
+DimPlot(Seurat.CM)
+
+#Figure 5B
+VlnPlot(Seurat.CM, features = c("Nppa", "Myh7", "Bambi", "Ccnd2", "Dstn", "Rock2", "Apc", "Kremen1"), split.by = "Condition")
+
+#Figure 5B
+VlnPlot(Seurat.CM, features = c("Cryab", "Cd9", "Cd81", "Cd63"), split.by = "Condition")
+
+#Figure 6D
+
+hyp.df_Hypoxy <- data.frame(Barcode = rownames(Seurat.EC@meta.data),
+                            Condition = Seurat.EC$Condition,
+                            Asph = Seurat.EC@assays$RNA@data["Asph", ],
+                            Arnt = Seurat.EC@assays$RNA@data ["Arnt", ],
+                            Cops5 = Seurat.EC@assays$RNA@data["Cops5", ],
+                            Creb1 = Seurat.EC@assays$RNA@data["Creb1", ],
+                            Hif1a = Seurat.EC@assays$RNA@data["Hif1a", ] ,
+                            Edn1 = Seurat.EC@assays$RNA@data ["Edn1", ],
+                            Ep300 = Seurat.EC@assays$RNA@data["Ep300", ],
+                            Hsp90aa1 = Seurat.EC@assays$RNA@data["Hsp90aa1", ],
+                            Jun = Seurat.EC@assays$RNA@data["Jun", ],
+                            Ldha = Seurat.EC@assays$RNA@data["Ldha", ],
+                            Nos3 = Seurat.EC@assays$RNA@data["Nos3", ],
+                            P4hb = Seurat.EC@assays$RNA@data["P4hb", ],
+                            Vhl = Seurat.EC@assays$RNA@data["Vhl", ])
+
+hyp.df_Hypoxy_score <- data.frame(hyp.df_Hypoxy, Hypoxy_Score = rowSums(hyp.df_Hypoxy[3:15]))
+
+Hypoxy_Score <- hyp.df_Hypoxy_score$Hypoxy_Score
+
+names(Hypoxy_Score) <- hyp.df_Hypoxy_score$Barcode
+
+Seurat.EC <- AddMetaData(object = Seurat.EC, metadata = Hypoxy_Score,
+                         col.name = "Hypoxy_Score")
+
+VlnPlot(Seurat.EC, group.by = "Condition",
+        features = "Hypoxy_Score", pt.size = 0)
+
+
+sig.hypoxy <- t.test(subset(hyp.df_Hypoxy_score,
+                            subset = Condition == "Disease")$Hypoxy_Score,
+                     subset(hyp.df_Hypoxy_score,
+                            subset = Condition == "Healthy")$Hypoxy_Score)
+
+#Figure 6F
+hyp.df_Exo <- data.frame(Barcode = rownames(Seurat.CM@meta.data),
+                            Condition = Seurat.CM$Condition,
+                            Cryab = Seurat.CM@assays$RNA@data["Cryab", ],
+                            Cd9 = Seurat.CM@assays$RNA@data ["Cd9", ],
+                            Cd81 = Seurat.CM@assays$RNA@data["Cd81", ],
+                            Cd63 = Seurat.CM@assays$RNA@data["Cd63", ],
+                            Tsg101 = Seurat.CM@assays$RNA@data["Tsg101", ])
+
+hyp.df_Exo_score_subCM <- data.frame(hyp.df_Exo, Exo_Score_subCM = rowSums(hyp.df_Exo[3:7]))
+
+Exo_Score_subCM <- hyp.df_Exo_score_subCM$Exo_Score_subCM
+
+names(Exo_Score_subCM) <- hyp.df_Exo_score_subCM$Barcode
+
+Seurat.CM <- AddMetaData(object = Seurat.CM, metadata = Exo_Score_subCM,
+                         col.name = "Exo_Score_subCM")
+
+VlnPlot(Seurat.CM, group.by = "Condition",
+        features = "Exo_Score_subCM")
+
+
+sig.exo <- t.test(subset(hyp.df_Exo_score_subCM,
+                     subset = Condition == "Disease")$Exo_Score_subCM,
+              subset(hyp.df_Exo_score_subCM,
+                     subset = Condition == "Healthy")$Exo_Score_subCM)
+

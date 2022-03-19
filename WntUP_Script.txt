@@ -1,0 +1,219 @@
+#load libraries
+library(Seurat)
+library(tidyverse)
+library(ggplot2)
+library(tidyr)
+library(SeuratData)
+library(patchwork)
+
+
+#Load object .rda from CogentDS software (Takara)
+load("C:/Users/Bleckwedel/Desktop/SCS_Lab_data/WntUP/WNTup.rda")
+
+#Take out controls
+samples <- grep("Ctrl", CogentDS_data$raw_data$metadata$Sample, invert= T )
+
+#Substracting countmatrix and the totaldata
+
+countmatrix  <- CogentDS_data$raw_data$gm
+totaldata <- CogentDS_data$raw_data$metadata
+
+#Defining control and treated samples
+Control_Samples <- c("756")
+Disease_Samples <- c("751")
+
+#Rownames as gene names
+rownames(countmatrix) <- CogentDS_data$raw_data$gene_info$Gene_Name
+
+#Generates a list with the genenames without ENSEBL code
+genenames <- limma::strsplit2(rownames(CogentDS_data$raw_data$gm), "_")[,2]
+
+#Check that all columns al equal 
+all.equal(genenames, CogentDS_data$raw_data$gene_info$Gene_Name)
+
+#Add condition column
+totaldata <- totaldata %>% 
+  mutate(Condition = if_else(Sample %in% c(Disease_Samples)
+                             , "Disease"
+                             ,"Healthy"))
+
+#Create Seurat Object
+Seurat <- CreateSeuratObject(countmatrix[, samples],
+                             meta.data = totaldata[samples, ],
+                             project = "WntUP",
+                             min.cells = 3, min.features = 200)
+
+#Check Mitochondial gene expression
+Seurat[["percent.mt"]] <- PercentageFeatureSet(Seurat, pattern = "mt-")
+
+#filter data
+Seurat <- subset(Seurat
+                 , subset = nFeature_RNA > 2500 
+                 & nFeature_RNA < 10000 
+                 & percent.mt <25) 
+
+#Split dataset into a list of two seurat objects (stim and CTRL)
+Seurat.list <- SplitObject(Seurat, split.by = "Condition")
+
+#Normalize and identify variable features for each dataset independently
+Seurat.list <- lapply(X = Seurat.list, FUN = function(x) {
+  x <- NormalizeData(x)
+  x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000)
+})
+
+#Select features that are repeatedly variable across datasets for integration
+features <- SelectIntegrationFeatures(object.list = Seurat.list)
+
+Seurat.anchors <- FindIntegrationAnchors(object.list = Seurat.list, anchor.features = features)
+
+# Integrate assay
+Seurat.combined <- IntegrateData(anchorset = Seurat.anchors)
+
+DefaultAssay(Seurat.combined) <- "integrated"
+
+# Run standard workflow for visualization and clustering
+Seurat.combined <- ScaleData(Seurat.combined, verbose = FALSE)
+Seurat.combined <- RunPCA(Seurat.combined, npcs = 30, verbose = FALSE)
+
+# Determine percent of variation associated with each PC
+pct <- Seurat[["pca"]]@stdev / sum(Seurat[["pca"]]@stdev) * 100
+
+# Calculate cumulative percents for each PC
+cumu <- cumsum(pct)
+
+# Determine which PC exhibits cumulative percent greater than 90% 
+#and % variation associated with the PC as less than 5
+co1 <- which(cumu > 90 & pct < 5)[1]
+
+# Determine the difference between variation of PC and subsequent PC.
+# change of % of variation is more than 0.1%.
+co2 <- sort(which((pct[1:length(pct) - 1] - pct[2:length(pct)]) > 0.1)
+            , decreasing = T)[1] + 1
+
+# Minimum of the two calculation
+pcs <- min(co1, co2)
+
+# Create a dataframe with values
+plot_df <- data.frame(variation.pct = pct, 
+                      cumulative.pct = cumu, 
+                      rank = 1:length(pct))
+
+Seurat.combined <- RunUMAP(Seurat.combined, reduction = "pca", dims = 1:12)
+Seurat.combined <- FindNeighbors(Seurat.combined, reduction = "pca", dims = 1:12)
+Seurat.combined <- FindClusters(Seurat.combined, resolution = 0.5)
+
+## Cluster markers analysis for cell clasification absed on cell markers
+DefaultAssay(Seurat.combined) <- "RNA"
+cluster0.markers <- FindMarkers(Seurat.combined, ident.1 = 0, min.pct = 0.5)
+cluster1.markers <- FindMarkers(Seurat.combined, ident.1 = 1, min.pct = 0.5)
+cluster2.markers <- FindMarkers(Seurat.combined, ident.1 = 2, min.pct = 0.5)
+cluster3.markers <- FindMarkers(Seurat.combined, ident.1 = 3, min.pct = 0.5)
+cluster4.markers <- FindMarkers(Seurat.combined, ident.1 = 4, min.pct = 0.5)
+cluster5.markers <- FindMarkers(Seurat.combined, ident.1 = 5, min.pct = 0.5)
+cluster6.markers <- FindMarkers(Seurat.combined, ident.1 = 6, min.pct = 0.5)
+cluster7.markers <- FindMarkers(Seurat.combined, ident.1 = 7, min.pct = 0.25)
+cluster8.markers <- FindMarkers(Seurat.combined, ident.1 = 8, min.pct = 0.25)
+cluster9.markers <- FindMarkers(Seurat.combined, ident.1 = 9, min.pct = 0.25)
+
+#Markers
+CMs_Markers<- c("Ttn","Tnnt2","Ryr2","Mybpc3",
+                "Atp2a2","Cox5a","Pdk2","Aco2","Gata4")
+
+Stress_Markers <- c("Ankrd1","Nppb","Nppa","Cryab","Acta1")
+
+ECs_Markers <- c("Vwf", "Pecam1","Kdr","Cdh5",
+                 "Cav1", "Cav2","Cavin2","Tspan7", "Fabp4","Rbp7", "Ly6c1", "Rgcc", "Emcn", "Kdr", "Tagln2")
+
+FBs_Markers <- c("Dcn", "Gsn","Pdgfra","Postn",
+                 "Igfbp6","Igfbp7","Igfbp4","Vim","Tcf21","Fbln2","Tnc")
+
+Pericyte_Markers <- c("Abcc9", "Kcnj8", "Rgs5", "Steap4", "Rgs4", "Aspn", "Vtn")
+
+MCs_Markers <- c ("Lyz2", "Cd74", "C1qb")
+
+Lymphoid_Markers <- c("Cd8a", "Cd40lg", "Il7r")
+
+Adipocyte_Markers <- c("Gpam", "Fasn", "Lep")
+
+SMs_Markers <- c("Myh11", "Tagln", "Acta2")
+
+## Differential Gene expression after integration
+c0.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 0, grouping.var = "Condition", verbose = FALSE)
+c1.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 1, grouping.var = "Condition", verbose = FALSE)
+c2.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 2, grouping.var = "Condition", verbose = FALSE)
+c3.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 3, grouping.var = "Condition", verbose = FALSE)
+c4.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 4, grouping.var = "Condition", verbose = FALSE)
+c5.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 5, grouping.var = "Condition", verbose = FALSE)
+c6.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 6, grouping.var = "Condition", verbose = FALSE)
+c7.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 7, grouping.var = "Condition", verbose = FALSE)
+c8.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 8, grouping.var = "Condition", verbose = FALSE)
+c9.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 9, grouping.var = "Condition", verbose = FALSE)
+
+
+#Figure 1A
+Dimplot(Seurat.combined)
+
+#Figure 1B
+FeaturePlot(Seurat.combined, features = c("Acta1", "Ankrd1"), blend = T)
+
+#Figure 1C
+VlnPlot(Seurat.combined
+        , features = c("Nppa", "Myh7", "Dstn", "Rock2", "Ccnd2", "Bambi")
+        , split.by = "Condition"
+        , idents = c("CM_1", "CM_2"))
+
+#Figure 1D
+VlnPlot(Seurat.combined
+        , features = c("Adam10", "Spry2", "Dhx32", "Angpt1", "Anxa1", "Ccnd2")
+        , split.by = "Condition"
+        , idents = c("EC_1", "EC_2"))
+
+#Extended Figure 2E
+DoHeatmap(Seurat.combined
+          ,features = c(CMs_Markers
+                        , FBs_Markers
+                        , MCs_Markers
+                        , ECs_Markers
+                        , Adipocyte_Markers
+                        , Pericyte_Markers)) + scale_fill_gradientn(colours = rev(mapal))
+
+#Extended Figure 2F
+Seurat.combined <- subset(Seurat.combined, subset = seurat_clusters %in% c(1,5))
+
+
+
+hyp.df_Stress <- data.frame(Barcode = rownames(Seurat.combined@meta.data),
+                     Condition = Seurat.combined$Condition,
+                     Nppa = Seurat.combined@assays$RNA@data["Nppa", ],
+                     Nppb = Seurat.combined@assays$RNA@data ["Nppb", ],
+                     Acta1 = Seurat.combined@assays$RNA@data["Acta1", ],
+                     Acta2 = Seurat.combined@assays$RNA@data["Acta2", ],
+                     Ankrd1 = Seurat.combined@assays$RNA@data["Ankrd1", ])
+
+hyp.df_Stress_score <- data.frame(hyp.df_Stress, Disease_Score = rowSums(hyp.df_Stress[3:7]))
+
+Disease_Score <- hyp.df_Stress_score$Disease_Score
+
+names(Disease_Score) <- hyp.df_Stress_score$Barcode
+
+Seurat.combined <- AddMetaData(object = Seurat.combined, metadata = Disease_Score,
+                         col.name = "Disease_Score")
+
+VlnPlot(Seurat.combined, group.by = "Condition",
+        features = "Disease_Score")
+
+
+sig.Stress <- t.test(subset(hyp.df_Stress_score,
+                     subset = Condition == "Disease")$Disease_Score,
+              subset(hyp.df_Stress_score,
+                     subset = Condition == "Healthy")$Disease_Score)
+
+#Extended Figure 3B
+
+FeaturePlot(Seurat.combined, features = c("C1qb", "Lyz2"), blend = T)
+
+FeaturePlot(Seurat.combined, features = c("Vtn", "Rgs4"), blend = T)
+
+FeaturePlot(Seurat.combined, features = c("Pdgfra", "Fbln2"), blend = T)
+
+
