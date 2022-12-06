@@ -1,9 +1,9 @@
-# Stressed_CMs_EVs
+Data from the publication Single-cell transcriptomic revealed extracellular vesicles secretion with a proteostasis signature by cardiomyocytes during pathological remodeling 
 
-#You can find the RAW and Normalized data here:
+In this link, you can find the Seurat objects necessary for creating the figures published. Within the object, you can also find the unnormalized and normalized count matrix with its corresponding metadata
 
-https://owncloud.gwdg.de/index.php/s/ifVkON3u0Uey1NT
+https://owncloud.gwdg.de/index.php/s/NeSJGuf2o2yc2qn
 
-#The files are in .rda format and should be opened with R
+Files are in .rda format and should be opened with R
 
-#The code used for the analysis can be found in this GitHub repository
+A description of the pipeline used for these analyses could be found in the material and methods section.
