@@ -6,4 +6,4 @@ https://owncloud.gwdg.de/index.php/s/NeSJGuf2o2yc2qn
 
 Files are in .rda format and should be opened with R
 
-A description of the pipeline used for these analyses could be found in the material and methods section.
+A description of the pipeline used for these analyses can be found in the material and methods section.
