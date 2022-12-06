@@ -1,219 +1,258 @@
-#load libraries
-library(Seurat)
-library(tidyverse)
-library(ggplot2)
-library(tidyr)
-library(SeuratData)
+#Load Seurat objects from the link in the README document
+
+
+library(viridis)
 library(patchwork)
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+
+#Figure 1 A
+DefaultAssay(Seurat_WntUP) <- "RNA"
+
+meta <- Seurat_WntUP@meta.data
+
+Disease_cells <- rownames(filter(meta, Condition == "ß-catΔex3"))
+Healthy_cells <- rownames(filter(meta, Condition == "Wildtype"))
+
+p1 <- DimPlot(subset(Seurat_WntUP, cells = Disease_cells), pt.size = 4,
+              label = T,
+              label.size = 6,
+              label.box = T,
+              repel = T,
+              cols = 7) +
+  labs(title = "UMAP ß-catΔex3 condition", x = "Dimension 1", y = "Dimension 2") +
+  theme(text = element_text(size = 40, family = "Arial"),
+        axis.text = element_text(size = 30, family = "Arial"),
+        axis.line = element_line(size = 1),
+        legend.text = element_text(size = 25)) +
+  coord_fixed()
 
 
-#Load object .rda from CogentDS software (Takara)
-load("C:/Users/Bleckwedel/Desktop/SCS_Lab_data/WntUP/WNTup.rda")
-
-#Take out controls
-samples <- grep("Ctrl", CogentDS_data$raw_data$metadata$Sample, invert= T )
-
-#Substracting countmatrix and the totaldata
-
-countmatrix  <- CogentDS_data$raw_data$gm
-totaldata <- CogentDS_data$raw_data$metadata
-
-#Defining control and treated samples
-Control_Samples <- c("756")
-Disease_Samples <- c("751")
-
-#Rownames as gene names
-rownames(countmatrix) <- CogentDS_data$raw_data$gene_info$Gene_Name
-
-#Generates a list with the genenames without ENSEBL code
-genenames <- limma::strsplit2(rownames(CogentDS_data$raw_data$gm), "_")[,2]
-
-#Check that all columns al equal 
-all.equal(genenames, CogentDS_data$raw_data$gene_info$Gene_Name)
-
-#Add condition column
-totaldata <- totaldata %>% 
-  mutate(Condition = if_else(Sample %in% c(Disease_Samples)
-                             , "Disease"
-                             ,"Healthy"))
-
-#Create Seurat Object
-Seurat <- CreateSeuratObject(countmatrix[, samples],
-                             meta.data = totaldata[samples, ],
-                             project = "WntUP",
-                             min.cells = 3, min.features = 200)
-
-#Check Mitochondial gene expression
-Seurat[["percent.mt"]] <- PercentageFeatureSet(Seurat, pattern = "mt-")
-
-#filter data
-Seurat <- subset(Seurat
-                 , subset = nFeature_RNA > 2500 
-                 & nFeature_RNA < 10000 
-                 & percent.mt <25) 
-
-#Split dataset into a list of two seurat objects (stim and CTRL)
-Seurat.list <- SplitObject(Seurat, split.by = "Condition")
-
-#Normalize and identify variable features for each dataset independently
-Seurat.list <- lapply(X = Seurat.list, FUN = function(x) {
-  x <- NormalizeData(x)
-  x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000)
-})
-
-#Select features that are repeatedly variable across datasets for integration
-features <- SelectIntegrationFeatures(object.list = Seurat.list)
-
-Seurat.anchors <- FindIntegrationAnchors(object.list = Seurat.list, anchor.features = features)
-
-# Integrate assay
-Seurat.combined <- IntegrateData(anchorset = Seurat.anchors)
-
-DefaultAssay(Seurat.combined) <- "integrated"
-
-# Run standard workflow for visualization and clustering
-Seurat.combined <- ScaleData(Seurat.combined, verbose = FALSE)
-Seurat.combined <- RunPCA(Seurat.combined, npcs = 30, verbose = FALSE)
-
-# Determine percent of variation associated with each PC
-pct <- Seurat[["pca"]]@stdev / sum(Seurat[["pca"]]@stdev) * 100
-
-# Calculate cumulative percents for each PC
-cumu <- cumsum(pct)
-
-# Determine which PC exhibits cumulative percent greater than 90% 
-#and % variation associated with the PC as less than 5
-co1 <- which(cumu > 90 & pct < 5)[1]
-
-# Determine the difference between variation of PC and subsequent PC.
-# change of % of variation is more than 0.1%.
-co2 <- sort(which((pct[1:length(pct) - 1] - pct[2:length(pct)]) > 0.1)
-            , decreasing = T)[1] + 1
-
-# Minimum of the two calculation
-pcs <- min(co1, co2)
-
-# Create a dataframe with values
-plot_df <- data.frame(variation.pct = pct, 
-                      cumulative.pct = cumu, 
-                      rank = 1:length(pct))
-
-Seurat.combined <- RunUMAP(Seurat.combined, reduction = "pca", dims = 1:12)
-Seurat.combined <- FindNeighbors(Seurat.combined, reduction = "pca", dims = 1:12)
-Seurat.combined <- FindClusters(Seurat.combined, resolution = 0.5)
-
-## Cluster markers analysis for cell clasification absed on cell markers
-DefaultAssay(Seurat.combined) <- "RNA"
-cluster0.markers <- FindMarkers(Seurat.combined, ident.1 = 0, min.pct = 0.5)
-cluster1.markers <- FindMarkers(Seurat.combined, ident.1 = 1, min.pct = 0.5)
-cluster2.markers <- FindMarkers(Seurat.combined, ident.1 = 2, min.pct = 0.5)
-cluster3.markers <- FindMarkers(Seurat.combined, ident.1 = 3, min.pct = 0.5)
-cluster4.markers <- FindMarkers(Seurat.combined, ident.1 = 4, min.pct = 0.5)
-cluster5.markers <- FindMarkers(Seurat.combined, ident.1 = 5, min.pct = 0.5)
-cluster6.markers <- FindMarkers(Seurat.combined, ident.1 = 6, min.pct = 0.5)
-cluster7.markers <- FindMarkers(Seurat.combined, ident.1 = 7, min.pct = 0.25)
-cluster8.markers <- FindMarkers(Seurat.combined, ident.1 = 8, min.pct = 0.25)
-cluster9.markers <- FindMarkers(Seurat.combined, ident.1 = 9, min.pct = 0.25)
-
-#Markers
-CMs_Markers<- c("Ttn","Tnnt2","Ryr2","Mybpc3",
-                "Atp2a2","Cox5a","Pdk2","Aco2","Gata4")
-
-Stress_Markers <- c("Ankrd1","Nppb","Nppa","Cryab","Acta1")
-
-ECs_Markers <- c("Vwf", "Pecam1","Kdr","Cdh5",
-                 "Cav1", "Cav2","Cavin2","Tspan7", "Fabp4","Rbp7", "Ly6c1", "Rgcc", "Emcn", "Kdr", "Tagln2")
-
-FBs_Markers <- c("Dcn", "Gsn","Pdgfra","Postn",
-                 "Igfbp6","Igfbp7","Igfbp4","Vim","Tcf21","Fbln2","Tnc")
-
-Pericyte_Markers <- c("Abcc9", "Kcnj8", "Rgs5", "Steap4", "Rgs4", "Aspn", "Vtn")
-
-MCs_Markers <- c ("Lyz2", "Cd74", "C1qb")
-
-Lymphoid_Markers <- c("Cd8a", "Cd40lg", "Il7r")
-
-Adipocyte_Markers <- c("Gpam", "Fasn", "Lep")
-
-SMs_Markers <- c("Myh11", "Tagln", "Acta2")
-
-## Differential Gene expression after integration
-c0.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 0, grouping.var = "Condition", verbose = FALSE)
-c1.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 1, grouping.var = "Condition", verbose = FALSE)
-c2.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 2, grouping.var = "Condition", verbose = FALSE)
-c3.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 3, grouping.var = "Condition", verbose = FALSE)
-c4.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 4, grouping.var = "Condition", verbose = FALSE)
-c5.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 5, grouping.var = "Condition", verbose = FALSE)
-c6.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 6, grouping.var = "Condition", verbose = FALSE)
-c7.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 7, grouping.var = "Condition", verbose = FALSE)
-c8.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 8, grouping.var = "Condition", verbose = FALSE)
-c9.markers <- FindConservedMarkers(Seurat.combined, ident.1 = 9, grouping.var = "Condition", verbose = FALSE)
+p2 <- DimPlot(subset(Seurat_WntUP, cells = Healthy_cells), pt.size = 4,
+              label = T,
+              label.size = 6,
+              label.box = T,
+              repel = T,
+              cols = 4) +
+  labs(title = "UMAP Wildtype condition", x = "Dimension 1", y = "Dimension 2") +
+  theme(text = element_text(size = 40, family = "Arial"),
+        axis.text = element_text(size = 30, family = "Arial"),
+        axis.line = element_line(size = 1),
+        legend.text = element_text(size = 25)) + 
+  coord_fixed()
 
 
-#Figure 1A
-Dimplot(Seurat.combined)
+wrap_plots(p2, p1, ncol = 2)
 
 #Figure 1B
-FeaturePlot(Seurat.combined, features = c("Acta1", "Ankrd1"), blend = T)
 
-#Figure 1C
-VlnPlot(Seurat.combined
-        , features = c("Nppa", "Myh7", "Dstn", "Rock2", "Ccnd2", "Bambi")
-        , split.by = "Condition"
-        , idents = c("CM_1", "CM_2"))
+Seurat_WntUP_CM$celltype <- gsub(pattern = "sub", replacement = "", Seurat_WntUP_CM$celltype)
+Seurat_WntUP_CM$Condition <- gsub(pattern = "Wildtype", replacement = "WT", Seurat_WntUP_CM$Condition)
+Seurat_WntUP_CM$celltype <- gsub(pattern = "_", replacement = "", Seurat_WntUP_CM$celltype)
 
-#Figure 1D
-VlnPlot(Seurat.combined
-        , features = c("Adam10", "Spry2", "Dhx32", "Angpt1", "Anxa1", "Ccnd2")
-        , split.by = "Condition"
-        , idents = c("EC_1", "EC_2"))
+Seurat_WntUP_CM$celltype <- factor(Seurat_WntUP_CM$celltype, levels = c("CM1", "CM2"))
 
-#Extended Figure 2E
-DoHeatmap(Seurat.combined
-          ,features = c(CMs_Markers
-                        , FBs_Markers
-                        , MCs_Markers
-                        , ECs_Markers
-                        , Adipocyte_Markers
-                        , Pericyte_Markers)) + scale_fill_gradientn(colours = rev(mapal))
+Idents(Seurat_WntUP_CM) <- Seurat_WntUP_CM$celltype
+p2 <- VlnPlot(Seurat_WntUP_CM, features = "Stress_score1",group.by = "celltype",
+              split.by =  "Condition", log = T, pt.size = 0) +
+  labs(title = "Stress Score", subtitle = "Acta1, Nppa, Nppb, Ankrd1",y = "log gene expression", x = "" ) +
+  theme(text = element_text(size = 25, family = "Arial"),
+        axis.text.y = element_text(size = 20, family = "Arial"),
+        axis.text.x = element_text(size = 20, family = "Arial"),
+  ) +
+  coord_fixed() +
+  coord_flip()
 
-#Extended Figure 2F
-Seurat.combined <- subset(Seurat.combined, subset = seurat_clusters %in% c(1,5))
+p1 <- DimPlot(Seurat_WntUP_CM, reduction = "umap", group.by = "celltype",
+              label = F, label.size = 10, pt.size = 3) +
+  labs(title = "UMAP subcluster cardiomyocytes", x= "Dimension 1", y = "Dimension 2") +
+  theme(text = element_text(size = 25, family = "Arial"),
+        axis.text = element_text(size = 25, family = "Arial"),
+        axis.line = element_line(size = 1),
+        axis.text.y = element_text(size = 25, family = "Arial"),
+        axis.text.x = element_text(size = 25, family = "Arial")) +
+  coord_fixed()
+
+design <- c("AA#BB
+            AA#BB
+            AA#BB")
+
+wrap_plots(p1,p2, ncol = 2)
+
+# Figure 1D
+
+DefaultAssay(Seurat_WntUP_CM) <- "RNA"
+
+genestoplot <- c("Nppa", "Myh7", "Dstn", "Rock2", "Ccnd2", "Bambi")
+
+Seurat_WntUP_CM$celltype_condition <- paste(Seurat_WntUP_CM$celltype, Seurat_WntUP_CM$Condition, sep = "_")
+Seurat_WntUP_CM$celltype_condition <- factor(Seurat_WntUP_CM$celltype_condition, c("CM1_ß-catΔex3","CM1_WT", "CM2_ß-catΔex3", "CM2_WT"))
+
+Idents(Seurat_WntUP_CM) <- Seurat_WntUP_CM$celltype_condition
+
+DotPlot(Seurat_WntUP_CM,
+        features = genestoplot,
+        cols = c("white", "red"), col.max = 4, col.min = -4, dot.scale = 40, dot.min = 0.1)+ RotatedAxis() + coord_flip() +
+  labs(x = "", y="") +
+  theme(text = element_text(size = 25, family = "Arial"),
+        axis.text = element_text(size = 25, family = "Arial"),
+        legend.position = "right",
+        axis.line = element_line(size = 1))
+
+# Figure 1E
+
+DefaultAssay(Seurat_WntUP_EC) <- "RNA"
+
+
+Idents(Seurat_WntUP_EC) <- Seurat_WntUP_EC$celltype_condition
+genesplot <- c("Adam10", "Spry1", "Dhx32", "Angpt1", "Anxa1", "Ccnd2")
+
+Seurat_WntUP_EC$celltype_condition <- factor(Seurat_WntUP_EC$celltype_condition, c("EC1_ß-catΔex3","EC1_WT", "EC2_ß-catΔex3"  , "EC2_WT"))
+Idents(Seurat_WntUP_EC) <- Seurat_WntUP_EC$celltype_condition
 
 
 
-hyp.df_Stress <- data.frame(Barcode = rownames(Seurat.combined@meta.data),
-                     Condition = Seurat.combined$Condition,
-                     Nppa = Seurat.combined@assays$RNA@data["Nppa", ],
-                     Nppb = Seurat.combined@assays$RNA@data ["Nppb", ],
-                     Acta1 = Seurat.combined@assays$RNA@data["Acta1", ],
-                     Acta2 = Seurat.combined@assays$RNA@data["Acta2", ],
-                     Ankrd1 = Seurat.combined@assays$RNA@data["Ankrd1", ])
-
-hyp.df_Stress_score <- data.frame(hyp.df_Stress, Disease_Score = rowSums(hyp.df_Stress[3:7]))
-
-Disease_Score <- hyp.df_Stress_score$Disease_Score
-
-names(Disease_Score) <- hyp.df_Stress_score$Barcode
-
-Seurat.combined <- AddMetaData(object = Seurat.combined, metadata = Disease_Score,
-                         col.name = "Disease_Score")
-
-VlnPlot(Seurat.combined, group.by = "Condition",
-        features = "Disease_Score")
+DotPlot(Seurat_WntUP_EC,
+        features = genesplot,
+        cols = c("white", "red"), col.max = 4, col.min = -4, dot.scale = 40, dot.min = 0.1)+ RotatedAxis() + coord_flip() +
+  labs(x = "", y="") +
+  theme(text = element_text(size = 25, family = "Arial"),
+        axis.text = element_text(size = 25, family = "Arial"),
+        legend.position = "right",
+        axis.line = element_line(size = 1))
 
 
-sig.Stress <- t.test(subset(hyp.df_Stress_score,
-                     subset = Condition == "Disease")$Disease_Score,
-              subset(hyp.df_Stress_score,
-                     subset = Condition == "Healthy")$Disease_Score)
+#Figure 5A
 
-#Extended Figure 3B
 
-FeaturePlot(Seurat.combined, features = c("C1qb", "Lyz2"), blend = T)
+DimPlot(Seurat_CM_5D_9W, split.by = "Stage_Condition", pt.size = 2.5, ncol = 2, label = T, label.size = 10)+
+  labs(x = "", y = "") +
+  theme_void()+
+  theme(text = element_text(size = 40,family = "Arial", color = "#000000"),
+        axis.text = element_blank(),
+        axis.title.x = element_blank(),
+        plot.title = element_blank(),
+        plot.subtitle = element_blank(),
+        axis.line = element_blank(),
+        legend.key.size = unit(3, "line"),
+        legend.text = element_text(size = 25,family = "Arial", color = "#000000"))+
+  coord_fixed()
 
-FeaturePlot(Seurat.combined, features = c("Vtn", "Rgs4"), blend = T)
 
-FeaturePlot(Seurat.combined, features = c("Pdgfra", "Fbln2"), blend = T)
+#Stress score
 
+Stress <- c("Nppa", "Nppb", "Ankrd1", "Acta1")
+
+Stress.list <- list(Stress)
+Seurat_CM_5D_9W <- AddModuleScore(object = Seurat_CM_5D_9W, features = Stress.list, name = "Stress_score")
+
+FeaturePlot(Seurat_CM_5D_9W, features = "Stress_score1", reduction = "umap",
+            label = FALSE, label.size = 28, pt.size = 5)+ 
+  scale_color_viridis(option = "B")+
+  labs(title = "Stress Score",  x= "", y = "") +
+  theme(text = element_text(size = 40, family = "Arial", color = "#000000"),
+        axis.text = element_text(size = 22, family = "Arial", color = "#000000"),
+        axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        title = element_text(size = 40, family = "Arial"),
+        legend.position = "right",
+        legend.text = element_text(size = 20,family = "Arial", color = "#000000")) +
+  coord_fixed()
+
+
+list_seurat <- SplitObject(Seurat_CM_5D_9W, split.by = "Stage")
+
+
+list_seurat$`5D`$subtype_Condition <- paste(list_seurat$`5D`$subtype,list_seurat$`5D`$Condition, sep = "_" )
+list_seurat$`9W`$subtype_Condition <- paste(list_seurat$`9W`$subtype,list_seurat$`9W`$Condition, sep = "_" )
+
+q1 <- DotPlot(list_seurat$`5D`,
+              features = c("Nppa", "Myh7", "Bambi", "Ccnd2", "Dstn", "Rock2","Shisa4", "Apc", "Kremen1")
+              , col.max = 4, col.min = -4, dot.scale = 20, dot.min = 0.1, group.by = "subtype_Condition")+
+  scale_color_viridis_b()+
+  labs(title = "5 Days after TAC") +
+  coord_fixed() +
+  RotatedAxis() +
+  coord_flip() +
+  labs(x = "", y="") +
+  theme(text = element_text(size = 20, family = "Arial"),
+        axis.text = element_text(size = 25, family = "Arial"),
+        legend.position = "right",
+        axis.line = element_line(size = 1),
+        plot.title = element_text(size = 30, family = "Arial"),
+        legend.text = element_text(size = 15)) 
+
+q2 <- DotPlot(list_seurat$`9W`,
+              features = c("Nppa", "Myh7", "Bambi", "Ccnd2", "Dstn", "Rock2","Shisa4", "Apc", "Kremen1")
+              , col.max = 4, col.min = -4, dot.scale = 20, dot.min = 0.1, group.by = "subtype_Condition")+
+  scale_color_viridis_b()+
+  labs(title = "9 Weeks after TAC") +
+  coord_fixed()+
+  RotatedAxis() +
+  coord_flip() +
+  labs(x = "", y="") +
+  theme(text = element_text(size = 20, family = "Arial"),
+        axis.text = element_text(size = 25, family = "Arial"),
+        legend.position = "right",
+        axis.line = element_line(size = 1),
+        plot.title = element_text(size = 30, family = "Arial"),
+        legend.text = element_text(size = 15))
+
+wrap_plots(q1,q2,ncol = 2, design = c("AAABBB"))
+
+
+#Ext fig 2 D
+
+PercentageFeatureSet(Seurat_WntUP, pattern =  "^Rp[sl][[:digit:]]") -> Seurat_WntUP$ribo_percent
+PercentageFeatureSet(Seurat_WntUP, pattern =  "^mt") -> Seurat_WntUP$mito_percent
+
+q1 <- VlnPlot(Seurat_WntUP, group.by = "Sample", features = "nFeature_RNA", pt.size = 0) +
+  labs(title = "", x = "Samples", y = "Genes per barcode") + 
+  theme(text = element_text(size = 20),
+        axis.text.x = element_text(size = 20),
+        axis.text.y  = element_text(size = 20))
+
+q2 <- VlnPlot(Seurat_WntUP, group.by = "Sample", features = "ribo_percent", pt.size = 0, y.max = 100) +
+  labs(title = "", x = "Samples", y = "Ribosomal RNA %") + 
+  theme(text = element_text(size = 20),
+        axis.text.x = element_text(size = 20),
+        axis.text.y  = element_text(size = 20))
+
+q3 <- VlnPlot(Seurat_WntUP, group.by = "Sample", features = "mito_percent", pt.size = 0, y.max = 100) +
+  labs(title = "", x = "Samples", y = "Mitochondrial RNA %") + 
+  theme(text = element_text(size = 20),
+        axis.text.x = element_text(size = 20),
+        axis.text.y  = element_text(size = 20))
+
+wrap_plots(q1,q2,q3,ncol = 3)
+
+
+#Plot extended figure 2E
+
+CM_mark <- c("Mybpc3","Atp2a2","Dmd", "Myh6", "Ryr2", "Tnni3", "Tnnt2", "Ttn")
+EC_mark <- c("Cdh5","Cav1", "Cav2","Cavin2","Tspan7","Fabp4","Rbp7", "Ly6c1",
+             "Rgcc", "Kdr", "Tagln2","Adgrl4", "Cd93", "Emcn", "Icam1",
+             "Pecam1", "Tie1", "Vwf")
+FB_mark <- c("Gsn","Postn","Igfbp6","Igfbp7","Igfbp4",
+             "Vim","Tcf21","Fbln2","Tnc","Adamts5", "Col1a1",
+             "Col1a2", "Dcn", "Ddr2", "Dpt", "Lamb1", "Mmp2",
+             "Pdgfra", "Vcan")
+LC_mark <- c("Cd14", "Cd163", "Cd74", "Lyz2", "Ptprc", "C1qb")
+SMC_mark <- c("Acta2", "Myh11", "Tagln")
+PC_mark <- c("Abcc9", "Kcnj8", "Pdgfrb", "Steap4", "Rgs5", "Rgs4", "Vtn")
+NLC_mark <- c("Erbb3", "Ncam1", "Nrxn1", "Nrxn3")
+Lymphoid_Markers <- c("Cd8a", "Cd40lg", "Il7r")
+Adipocyte_Markers <- c("Gpam", "Fasn", "Lep")
+
+DotPlot(Seurat_WntUP,
+        features = c(NLC_mark, Lymphoid_Markers, Adipocyte_Markers, SMC_mark,PC_mark, LC_mark, FB_mark,EC_mark, CM_mark),
+        cols = c("white", "red"), col.max = 4, col.min = -4) + coord_flip() +
+  labs(x = "", y="") + 
+  theme(text = element_text(size = 20),
+        axis.text = element_text(size = 12),
+        legend.position = "top")
 
